@@ -76,6 +76,14 @@ class GetImages:
 
 if __name__=="__main__":
     g = GetImages("data")
+    f = open("imageList.txt","r")
+    for line in f:
+        line = line[:-1]
+    	print line
+        g.getImages(line,5000)
+
+
+
     g.getImages(["犬"],5000)
     g.getImages(["猫"],5000)
     g.getImages(["森"],5000)
