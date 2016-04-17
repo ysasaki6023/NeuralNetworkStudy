@@ -19,10 +19,10 @@ from chainer import serializers
 # Set variables
 dataFolder = "data"
 
-dirName = "output/Conv3_Linear2"
+dirName = "output/Conv3_Linear3"
 inputPixels = 100
-Train_Frac = 0.0003 # Frac will be used for the training
-Test_Frac  = 0.0003 # Frac will be used for the training
+Train_Frac = 0.01 # Frac will be used for the training
+Test_Frac  = 0.02 # Frac will be used for the training
 
 # Read arg
 parser = argparse.ArgumentParser(description='XXX')
@@ -76,13 +76,15 @@ class MLP(chainer.Chain):
             c2=F.Convolution2D(32, 32, 3, pad=1), # color, features, filter size
             l1=F.Linear(32*10*10, 1000),
             l2=F.Linear(1000, 1000),
-            l3=F.Linear(1000, len(y_uniq)))
+            l3=F.Linear(1000, 1000),
+            l4=F.Linear(1000, len(y_uniq)))
     def __call__(self, x):
         h = F.max_pooling_2d(F.relu(self.c1(x)), 2)
         h = F.max_pooling_2d(F.relu(self.c2(h)), 5)
         h = F.dropout(F.relu(self.l1(h)))
         h = F.dropout(F.relu(self.l2(h)))
-        y  = self.l3(h)
+        h = F.dropout(F.relu(self.l3(h)))
+        y  = self.l4(h)
         return y
 
 class Classifier(chainer.Chain):
@@ -195,6 +197,7 @@ while True:
     perm = np.random.permutation(len(i_test))
     sum_loss = 0
     sum_totl = 0
+    sum_accuracy = 0
     for i in range(0, len(i_test), batchsize):
         x = Variable(loadImages(x_files[i_test[perm[i:i + batchsize]]]),volatile="on")
         t = Variable(xp.asarray(y_data [i_test[perm[i:i + batchsize]]]),volatile="on")
@@ -247,5 +250,5 @@ while True:
 
     print 'done' 
     epoch_end = time.time()
-    print "Time spent: %5.0fsec, Training: %3.2e events, Testing: %3.2e events"%(epoch_end-epoch_end,save_Ntrain,save_Ntest)
+    print "Time spent: %5.0fsec, Training: %3.2e events, Testing: %3.2e events"%(epoch_end-epoch_start,save_Ntrain,save_Ntest)
 
