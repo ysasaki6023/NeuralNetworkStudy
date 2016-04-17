@@ -19,10 +19,10 @@ from chainer import serializers
 # Set variables
 dataFolder = "data"
 
-dirName = "output/Conv3_Linear3"
+dirName = "output/Conv3_Linear3_DropOut_Large"
 inputPixels = 100
-Train_Frac = 0.01 # Frac will be used for the training
-Test_Frac  = 0.02 # Frac will be used for the training
+Train_Frac = 0.8 # Frac will be used for the training
+Test_Frac  = 0.2 # Frac will be used for the training
 
 # Read arg
 parser = argparse.ArgumentParser(description='XXX')
@@ -75,15 +75,17 @@ class MLP(chainer.Chain):
             c1=F.Convolution2D(3 , 32, 3, pad=1), # color, features, filter size
             c2=F.Convolution2D(32, 32, 3, pad=1), # color, features, filter size
             l1=F.Linear(32*10*10, 1000),
-            l2=F.Linear(1000, 1000),
-            l3=F.Linear(1000, 1000),
-            l4=F.Linear(1000, len(y_uniq)))
+            l2=F.Linear(1000, 100),
+            l3=F.Linear(100, 100),
+            l4=F.Linear(100, len(y_uniq)))
+        self.Train = True
+        self.DropRatio = 0.5
     def __call__(self, x):
         h = F.max_pooling_2d(F.relu(self.c1(x)), 2)
         h = F.max_pooling_2d(F.relu(self.c2(h)), 5)
-        h = F.dropout(F.relu(self.l1(h)))
-        h = F.dropout(F.relu(self.l2(h)))
-        h = F.dropout(F.relu(self.l3(h)))
+        h = F.dropout(F.relu(self.l1(h)),train = self.Train, ratio = self.DropRatio)
+        h = F.dropout(F.relu(self.l2(h)),train = self.Train, ratio = self.DropRatio)
+        h = F.dropout(F.relu(self.l3(h)),train = self.Train, ratio = self.DropRatio)
         y  = self.l4(h)
         return y
 
@@ -167,6 +169,8 @@ while True:
         x = Variable(loadImages(x_files[i_train[perm[i:i + batchsize]]]))
         t = Variable(xp.asarray(y_data [i_train[perm[i:i + batchsize]]]))
         mid   = time.time()
+
+        model.Train = True
         optimizer.zero_grads()
         loss = model(x,t)
 
@@ -201,6 +205,7 @@ while True:
     for i in range(0, len(i_test), batchsize):
         x = Variable(loadImages(x_files[i_test[perm[i:i + batchsize]]]),volatile="on")
         t = Variable(xp.asarray(y_data [i_test[perm[i:i + batchsize]]]),volatile="on")
+        model.Train = False
         loss = model(x,t)
 
         sum_loss     += float(cuda.to_cpu(loss.data)) * batchsize
