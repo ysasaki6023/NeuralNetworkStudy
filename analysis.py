@@ -18,6 +18,8 @@ from chainer import serializers
 
 # Set variables
 dataFolder = "data"
+
+dirName = "output/Conv3_Linear2"
 inputPixels = 100
 Train_Frac = 0.0003 # Frac will be used for the training
 Test_Frac  = 0.0003 # Frac will be used for the training
@@ -70,13 +72,17 @@ xp = np
 class MLP(chainer.Chain):
     def __init__(self):
         super(MLP,self).__init__(
-            l1=F.Linear(inputPixels*inputPixels*3, n_units),
-            l2=F.Linear(n_units, n_units),
-            l3=F.Linear(n_units, len(y_uniq)))
+            c1=F.Convolution2D(3 , 32, 3, pad=1), # color, features, filter size
+            c2=F.Convolution2D(32, 32, 3, pad=1), # color, features, filter size
+            l1=F.Linear(32*10*10, 1000),
+            l2=F.Linear(1000, 1000),
+            l3=F.Linear(1000, len(y_uniq)))
     def __call__(self, x):
-        h1 = F.dropout(F.relu(self.l1(x )))
-        h2 = F.dropout(F.relu(self.l2(h1)))
-        y  = self.l3(h2)
+        h = F.max_pooling_2d(F.relu(self.c1(x)), 2)
+        h = F.max_pooling_2d(F.relu(self.c2(h)), 5)
+        h = F.dropout(F.relu(self.l1(h)))
+        h = F.dropout(F.relu(self.l2(h)))
+        y  = self.l3(h)
         return y
 
 class Classifier(chainer.Chain):
@@ -113,12 +119,13 @@ def loadImages(fileNames):
                    int( size[0]/2 + min(size)/2), int( size[1]/2 + min(size)/2))
         img = img.crop(cropBox)
         img = img.resize((inputPixels,inputPixels))
-        nimg = np.array(img)
+        nimg = np.array(img) / 256.
         # plt.imshow(nimg)
         # plt.show()
-        aimg = nimg.ravel() / 256.
+        #aimg = nimg.ravel() / 256.
+        aimg = nimg.transpose(2,0,1)
         if iFile==0:
-            x_data = np.zeros((len(fileNames),len(aimg)),dtype=np.float32)
+            x_data = np.zeros([len(fileNames)]+list(aimg.shape),dtype=np.float32)
         x_data[iFile,:] = aimg
     return x_data
 
@@ -152,6 +159,7 @@ while True:
     sum_totl = 0
     time_load = 0.
     time_calc = 0.
+    epoch_start = time.time()
     for i in range(0, len(i_train), batchsize):
         start = time.time()
         x = Variable(loadImages(x_files[i_train[perm[i:i + batchsize]]]))
@@ -178,6 +186,7 @@ while True:
         save_estClass [i:i+Nlen] = np.argmax(model.y.data,axis=1)
         save_comment  [i:i+Nlen] = "t"
         save_Ntrain += Nlen
+        print "Training (batch: %10d/%10d)"%(i,len(i_train))
     train_loss = sum_loss     / sum_totl
     train_accu = sum_accuracy / sum_totl
     print 'train mean loss=%3.2e, accuracy = %d%%'%( train_loss, train_accu * 100.)
@@ -202,13 +211,13 @@ while True:
         save_estClass [save_Ntrain+i:save_Ntrain+i+Nlen] = np.argmax(model.y.data,axis=1)
         save_comment  [save_Ntrain+i:save_Ntrain+i+Nlen] = "e"
         save_Ntest += Nlen
+        print "Testing  (batch: %10d/%10d)"%(i,len(i_test))
     test_loss = sum_loss     / sum_totl
     test_accu = sum_accuracy / sum_totl
     print 'test  mean loss=%3.2e, accuracy = %d%%'%( test_loss, test_accu * 100.)
 
     # Save the model and the optimizer
     print 'saving files ...'
-    dirName = "output/test"
     if not os.path.exists(dirName):
         os.makedirs(dirName)
     if model.epoch == 1:
@@ -220,9 +229,12 @@ while True:
             writer = csv.writer(f,lineterminator='\n')
             for i,line in enumerate(zip(y_data,y_files,x_files)):
                 writer.writerow([i]+list(line))
-        with open(os.path.join(dirName,"trainProgress.csv"),"wa") as f:
-            writer = csv.writer(f,lineterminator='\n')
-            writer.writerow([model.epoch,train_loss,train_accu,test_loss,test_accu])
+        addMode = "w"
+    else:
+        addMode = "a"
+    with open(os.path.join(dirName,"trainProgress.csv"),addMode) as f:
+        writer = csv.writer(f,lineterminator='\n')
+        writer.writerow([model.epoch,train_loss,train_accu,test_loss,test_accu])
 
     with open(os.path.join(dirName,"model.pickle"),"wb") as f:
         pickle.dump(model,f)
@@ -234,4 +246,6 @@ while True:
              save_comment[:save_Ntrain+save_Ntest])
 
     print 'done' 
+    epoch_end = time.time()
+    print "Time spent: %5.0fsec, Training: %3.2e events, Testing: %3.2e events"%(epoch_end-epoch_end,save_Ntrain,save_Ntest)
 
