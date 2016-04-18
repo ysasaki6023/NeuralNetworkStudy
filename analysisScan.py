@@ -16,13 +16,13 @@ import chainer.functions as F
 from chainer import optimizers, Variable, FunctionSet
 from chainer import serializers
 
-
 # Set variables
 dataFolder = "data"
 
 #dirName = "output/Conv3_Linear3_DropOut_Small"
 inputPixels = 100
-UseFrac  = 0.05
+UseFrac  = 0.01
+EvlFrac  = 0.01
 
 # Read arg
 parser = argparse.ArgumentParser(description='XXX')
@@ -57,15 +57,16 @@ for fname in glob.glob(dataFolder+"/*/*.jpg"):
  
 y_uniq = list(set(y_files))
 #y_data = np.zeros( (len(y_files), len(y_uniq) ) )
-y_data = np.zeros( (len(y_files) ), dtype=np.int32 )
-y_files= np.array(y_files,dtype="string")
-x_files= np.array(x_files,dtype="string")
+ori_y_data = np.zeros( (len(y_files) ), dtype=np.int32 )
+ori_y_files= np.array(y_files,dtype="string")
+ori_x_files= np.array(x_files,dtype="string")
 for i,s in enumerate(y_uniq):
-    y_data[y_files == s] = i
+    ori_y_data[ori_y_files == s] = i
 
 # Prepare training data
-Perm = np.random.permutation(len(y_data))
-i_all,_ = np.split(Perm,[int(len(Perm)*(UseFrac))])
+Perm = np.random.permutation(len(ori_y_data))
+#i_all,i_evl,_ = np.split(Perm,[int(len(Perm)*(UseFrac)),int(len(Perm)*(UseFrac+EvlFrac))])
+i_all,i_else = np.split(Perm,[int(len(Perm)*(UseFrac))])
 
 xp = np
 
@@ -128,12 +129,11 @@ class NNClass(BaseEstimator, ClassifierMixin):
         self.N_l2 = N_l2
         self.N_l3 = N_l1
         self.DropRatio = DropRatio
-        self.MinIter = 0
-        self.MaxIter = MaxIter
+        self.MinIter = 10
+        self.MaxIter = 50
+        self.StopNumOfDown = 5
 
     def fit(self,X,y):
-        x_files = X
-        y_data  = y
 
         # Setup optimizer
         self.model     = Classifier(MLP(N_l1=self.N_l1,
@@ -143,10 +143,14 @@ class NNClass(BaseEstimator, ClassifierMixin):
         self.optimizer = optimizers.Adam()
         self.optimizer.setup(self.model)
 
+        lossList = []
+
         epoch = 0
         while True:
             epoch += 1
             print 'epoch', epoch 
+            x_files = X
+            y_data  = y
 
             # training
             perm = np.random.permutation(len(x_files))
@@ -166,16 +170,45 @@ class NNClass(BaseEstimator, ClassifierMixin):
                 loss.backward()
                 self.optimizer.update()
 
-                sum_loss     += float(cuda.to_cpu(loss.data)) * batchsize
+                sum_loss     += float(cuda.to_cpu(loss.data))   * batchsize
                 sum_accuracy += float(self.model.accuracy.data) * batchsize
                 sum_totl     += batchsize
 
                 print "Training (batch: %10d/%10d)"%(i,len(y_data))
-            print 'train mean loss=%3.2e, accuracy = %d%%'%( sum_loss / sum_totl, sum_accuracy / sum_totl * 100.)
 
-            if epoch<=self.MinIter: continue
+            train_loss = sum_loss     / sum_totl
+            train_accu = sum_accuracy / sum_totl
+            print 'Train mean loss=%3.2e, accuracy = %d%%'%( train_loss, train_accu * 100.)
+
+            sum_accuracy = 0
+            sum_loss = 0
+            sum_totl = 0
+            i_evl,_ = np.split(i_else[np.random.permutation(len(i_else))],[int(len(Perm)*(EvlFrac))])
+            x_files = ori_x_files[i_evl]
+            y_data  = ori_y_data [i_evl]
+            perm = np.random.permutation(len(x_files))
+            for i in range(0, len(i_evl), batchsize):
+                x = Variable(loadImages(x_files[perm[i:i + batchsize]]))
+                t = Variable(xp.asarray(y_data [perm[i:i + batchsize]]))
+
+                self.model.Train = False
+                loss = self.model(x,t)
+
+                sum_loss     += float(cuda.to_cpu(loss.data))   * batchsize
+                sum_accuracy += float(self.model.accuracy.data) * batchsize
+                sum_totl     += batchsize
+
+                print "Testing  (batch: %10d/%10d)"%(i,len(y_data))
+            test_loss = sum_loss     / sum_totl
+            test_accu = sum_accuracy / sum_totl
+            print 'Test  mean loss=%3.2e, accuracy = %d%%'%( test_loss, test_accu * 100.)
+            lossList.append(test_loss)
+            print lossList
+
+
             if epoch>=self.MaxIter: break
-            #if min(LossList)<min(LossList[-self.StopNumOfDown:]): break
+            if epoch<=self.MinIter: continue
+            if min(lossList)<min(lossList[-self.StopNumOfDown:]): break
 
         return self
 
@@ -188,7 +221,9 @@ class NNClass(BaseEstimator, ClassifierMixin):
         y = np.zeros(len(x_files),dtype=np.int32)
         sum_loss = 0
         sum_totl = 0
+        print "a"
         for i in range(0, len(x_files), batchsize):
+            print i
             x = Variable(loadImages(x_files[perm[i:i + batchsize]]),volatile="on")
             t = Variable(xp.asarray(y_data [perm[i:i + batchsize]]),volatile="on")
             self.model.Train = False
@@ -199,14 +234,14 @@ class NNClass(BaseEstimator, ClassifierMixin):
 
 if __name__=="__main__":
     from sklearn import grid_search
-    parameters = {'MaxIter':[10,15,20,30],
-                  'N_l1'   :[100,500,1000,2000],
+    parameters = {#'MaxIter':[10,15,20,30],
+                  'N_l1'   :[10,50,100,500],
                   'N_l2'   :[10,50,100,500],
                   'DropRatio':[0.5],
                   }
-    clf = grid_search.GridSearchCV(NNClass(),parameters,cv=5,verbose=3,n_jobs=-1)
-    print "Scan over %d samples"%len(x_files[i_all])
-    clf.fit(x_files[i_all],y_data[i_all])
+    clf = grid_search.GridSearchCV(NNClass(),parameters,cv=3,verbose=3,n_jobs=4)
+    print "Scan over %d samples"%len(ori_x_files[i_all])
+    clf.fit(ori_x_files[i_all],ori_y_data[i_all])
     print "\n+ ベストパラメータ:\n"
     print clf.best_estimator_
     print"\n+ トレーニングデータでCVした時の平均スコア:\n"
