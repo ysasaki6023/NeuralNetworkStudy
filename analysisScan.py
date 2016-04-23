@@ -21,8 +21,10 @@ dataFolder = "data"
 
 #dirName = "output/Conv3_Linear3_DropOut_Small"
 inputPixels = 100
-UseFrac  = 0.01
-EvlFrac  = 0.01
+UseFrac  = 0.05
+EvlFrac  = 0.05
+
+fileNameList = []
 
 # Read arg
 parser = argparse.ArgumentParser(description='XXX')
@@ -91,19 +93,19 @@ def loadImages(fileNames):
 
 
 class MLP(chainer.Chain):
-    def __init__(self,N_l1 = 100, N_l2 = 100, N_l3 = 100, DropRatio = 0.5):
+    def __init__(self,N_l1 = 100, N_l2 = 100, N_l3 = 100, N_features = 32, DropRatio = 0.5):
         super(MLP,self).__init__(
-            c1=F.Convolution2D(3 , 32, 3, pad=1), # color, features, filter size
-            c2=F.Convolution2D(32, 32, 3, pad=1), # color, features, filter size
-            l1=F.Linear(32*10*10, N_l1),
+            c1=F.Convolution2D(3 , N_features, 3, pad=1), # color, features, filter size
+            c2=F.Convolution2D(N_features, N_features, 3, pad=1), # color, features, filter size
+            l1=F.Linear(N_features*10*10, N_l1),
             l2=F.Linear(N_l1, N_l2),
             l3=F.Linear(N_l2, N_l3),
             l4=F.Linear(N_l3, len(y_uniq)))
         self.DropRatio = DropRatio
         self.Train = True
     def __call__(self, x):
-        h = F.max_pooling_2d(F.relu(self.c1(x)), 2)
-        h = F.max_pooling_2d(F.relu(self.c2(h)), 5)
+        h = F.max_pooling_2d(F.relu(self.c1(x)), 5)
+        h = F.max_pooling_2d(F.relu(self.c2(h)), 2)
         h = F.dropout(F.relu(self.l1(h)),train = self.Train, ratio = self.DropRatio)
         h = F.dropout(F.relu(self.l2(h)),train = self.Train, ratio = self.DropRatio)
         h = F.dropout(F.relu(self.l3(h)),train = self.Train, ratio = self.DropRatio)
@@ -123,15 +125,25 @@ class Classifier(chainer.Chain):
 
 
 from sklearn.base import BaseEstimator, ClassifierMixin, RegressorMixin
+import random
 class NNClass(BaseEstimator, ClassifierMixin):
-    def __init__(self,N_l1=1000,N_l2=100,DropRatio=0.5,MaxIter=20):
+    def __init__(self,N_l1=1000,N_l2=100,N_features=32, DropRatio=0.5,MaxIter=20):
         self.N_l1 = N_l1
         self.N_l2 = N_l2
         self.N_l3 = N_l1
-        self.DropRatio = DropRatio
-        self.MinIter = 10
-        self.MaxIter = 50
-        self.StopNumOfDown = 5
+        self.DropRatio  = DropRatio
+        self.N_features = N_features
+        self.MinIter = 200
+        self.MaxIter = 200
+        self.StopNumOfDown = 0
+        fIndex = 0
+        while True:
+            fIndex += 1
+            self.recFile = "rec/N1=%d_N2=%d_Nf=%d_DR=%.1f_v2.dat"%(N_l1, N_l2, N_features, DropRatio)
+            if os.path.exists(self.recFile): continue
+            with open(self.recFile,"w") as f:
+                f.write("Epoch,Mode,Total,Loss,Accuracy,fLoss,fAccuracy\n")
+            break
 
     def fit(self,X,y):
 
@@ -139,6 +151,7 @@ class NNClass(BaseEstimator, ClassifierMixin):
         self.model     = Classifier(MLP(N_l1=self.N_l1,
                                         N_l2=self.N_l2,
                                         N_l3=self.N_l3,
+                                        N_features = self.N_features,
                                         DropRatio=self.DropRatio))
         self.optimizer = optimizers.Adam()
         self.optimizer.setup(self.model)
@@ -179,6 +192,8 @@ class NNClass(BaseEstimator, ClassifierMixin):
             train_loss = sum_loss     / sum_totl
             train_accu = sum_accuracy / sum_totl
             print 'Train mean loss=%3.2e, accuracy = %d%%'%( train_loss, train_accu * 100.)
+            with open(self.recFile,"a") as f:
+                f.write("%d,train,%f,%f,%f,%f,%f\n"%(epoch,sum_totl,sum_loss,sum_accuracy,train_loss,train_accu))
 
             sum_accuracy = 0
             sum_loss = 0
@@ -202,13 +217,15 @@ class NNClass(BaseEstimator, ClassifierMixin):
             test_loss = sum_loss     / sum_totl
             test_accu = sum_accuracy / sum_totl
             print 'Test  mean loss=%3.2e, accuracy = %d%%'%( test_loss, test_accu * 100.)
+            with open(self.recFile,"a") as f:
+                f.write("%d,test,%f,%f,%f,%f,%f\n"%(epoch,sum_totl,sum_loss,sum_accuracy,test_loss,test_accu))
             lossList.append(test_loss)
             print lossList
 
 
             if epoch>=self.MaxIter: break
             if epoch<=self.MinIter: continue
-            if min(lossList)<min(lossList[-self.StopNumOfDown:]): break
+            #if min(lossList)<min(lossList[-self.StopNumOfDown:]): break
 
         return self
 
@@ -221,7 +238,6 @@ class NNClass(BaseEstimator, ClassifierMixin):
         y = np.zeros(len(x_files),dtype=np.int32)
         sum_loss = 0
         sum_totl = 0
-        print "a"
         for i in range(0, len(x_files), batchsize):
             print i
             x = Variable(loadImages(x_files[perm[i:i + batchsize]]),volatile="on")
@@ -230,20 +246,20 @@ class NNClass(BaseEstimator, ClassifierMixin):
             loss = self.model(x,t)
             sum_loss += float(cuda.to_cpu(loss.data)) * batchsize
             sum_totl     += batchsize
-        return (sum_loss/sum_totl)
+        return (-sum_loss/sum_totl)
 
 if __name__=="__main__":
     from sklearn import grid_search
     parameters = {#'MaxIter':[10,15,20,30],
-                  'N_l1'   :[10,50,100,500],
-                  'N_l2'   :[10,50,100,500],
-                  'DropRatio':[0.5],
+                  'N_l1'   :[100],
+                  'N_l2'   :[100],
+                  'N_features' :[16],
+                  'DropRatio':[0.0,0.2,0.4,0.6,0.8],
                   }
-    clf = grid_search.GridSearchCV(NNClass(),parameters,cv=3,verbose=3,n_jobs=4)
+    #clf=NNClass(N_l1=100,N_l2=100,N_features=16,DropRatio=0.0)
+    #clf=NNClass(N_l1=100,N_l2=100,N_features=16,DropRatio=0.2)
+    #clf=NNClass(N_l1=100,N_l2=100,N_features=16,DropRatio=0.4)
+    #clf=NNClass(N_l1=100,N_l2=100,N_features=16,DropRatio=0.6)
+    clf=NNClass(N_l1=100,N_l2=100,N_features=16,DropRatio=0.8)
     print "Scan over %d samples"%len(ori_x_files[i_all])
     clf.fit(ori_x_files[i_all],ori_y_data[i_all])
-    print "\n+ ベストパラメータ:\n"
-    print clf.best_estimator_
-    print"\n+ トレーニングデータでCVした時の平均スコア:\n"
-    for params, mean_score, all_scores in clf.grid_scores_:
-        print "{:.3f} (+/- {:.3f}) for {}".format(mean_score, all_scores.std() / 2, params)
