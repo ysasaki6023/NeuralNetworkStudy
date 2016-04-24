@@ -4,6 +4,8 @@ import time
 
 import numpy as np
 import six
+import os
+import shutil
 
 import chainer
 from chainer import computational_graph
@@ -14,6 +16,8 @@ from chainer import optimizers
 from chainer import serializers
 
 import cPickle as pickle
+import matplotlib.pyplot as plt
+import matplotlib.cm
 
 
 class ImageProcessNetwork(chainer.Chain):
@@ -33,7 +37,7 @@ class ImageProcessNetwork(chainer.Chain):
                  P3P_ksize  = 2,
                  L1_dropout  = 0.0,
                  L2_unit     = 256,
-                 L2_dropout  = 0.5):
+                 L2_dropout  = 0.0):
         super(ImageProcessNetwork, self).__init__()
         self.IsTrain = False
         self.P1N_Normalize = P1N_Normalize
@@ -89,124 +93,135 @@ class ImageProcessNetwork(chainer.Chain):
         return y
 
 
-parser = argparse.ArgumentParser(description='Chainer example: MNIST')
-parser.add_argument('--initmodel', '-m', default='',
-                    help='Initialize the model from given file')
-parser.add_argument('--resume', '-r', default='',
-                    help='Resume the optimization from snapshot')
-parser.add_argument('--gpu', '-g', default=0, type=int,
-                    help='GPU ID (negative value indicates CPU)')
-parser.add_argument('--epoch', '-e', default=200, type=int,
-                    help='number of epochs to learn')
-parser.add_argument('--batchsize', '-b', type=int, default=1000,
-                    help='learning minibatch size')
-args = parser.parse_args()
+def CifarAnalysis(folderName=None,n_epoch=1,batchsize = 1000, **kwd):
+    id_gpu  = 0
 
-batchsize = args.batchsize
-n_epoch = args.epoch
+    OutStr = ""
+    OutStr += 'GPU: {}\n'.format(id_gpu)
+    OutStr += 'Minibatch-size: {}\n'.format(batchsize) 
+    OutStr += 'epoch: {}\n'.format(n_epoch) 
+    OutStr += '' 
 
-print 'GPU: {}'.format(args.gpu)
-print '# Minibatch-size: {}'.format(args.batchsize) 
-print '# epoch: {}'.format(args.epoch) 
-print '' 
+    print OutStr
+
+    fOutput = None
+    fInfo   = None
+    if folderName:
+        if not os.path.exists(folderName):
+            os.makedirs(folderName)
+        fOutput = open(os.path.join(folderName,"output.dat"),"w")
+        fInfo   = open(os.path.join(folderName,"info.dat"),"w")
+        shutil.copyfile(__file__,os.path.join(folderName,os.path.basename(__file__)))
+
+    if fInfo: fInfo.write(OutStr)
 
 # Prepare dataset
-InDataBatch = []
+    InDataBatch = []
 
-data_tr  = np.zeros((50000,3*32*32),dtype=np.float32)
-data_ev  = np.zeros((10000,3*32*32),dtype=np.float32)
-label_tr = np.zeros((50000),dtype=np.int32)
-label_ev = np.zeros((10000),dtype=np.int32)
+    data_tr  = np.zeros((50000,3*32*32),dtype=np.float32)
+    data_ev  = np.zeros((10000,3*32*32),dtype=np.float32)
+    label_tr = np.zeros((50000),dtype=np.int32)
+    label_ev = np.zeros((10000),dtype=np.int32)
 
-for i in range(1,5+1):
-    with open("data_cifar10/data_batch_%d"%i,"r") as f:
+    for i in range(1,5+1):
+        with open("data_cifar10/data_batch_%d"%i,"r") as f:
+            tmp = pickle.load(f)
+            data_tr [(i-1)*10000:i*10000] = tmp["data"]
+            label_tr[(i-1)*10000:i*10000] = tmp["labels"]
+    with open("data_cifar10/test_batch","r") as f:
         tmp = pickle.load(f)
-        data_tr [(i-1)*10000:i*10000] = tmp["data"]
-        label_tr[(i-1)*10000:i*10000] = tmp["labels"]
-with open("data_cifar10/test_batch","r") as f:
-    tmp = pickle.load(f)
-    data_ev  [:] = tmp["data"]
-    label_ev [:] = tmp["labels"]
-
-data_tr = data_tr.reshape((len(data_tr),3,32,32))
-data_ev = data_ev.reshape((len(data_ev),3,32,32))
+        data_ev  [:] = tmp["data"]
+        label_ev [:] = tmp["labels"]
 
 ## Prep
-# ...
-# ...
-x_tr = data_tr / 256.
-x_ev = data_ev / 256.
-y_tr = label_tr
-y_ev = label_ev
-N_tr = len(data_tr) # 50000
-N_ev = len(data_ev) # 10000
+    print "Normalizing data ..."
+    def Normalize(x):
+        avg  = np.average(x,axis=1).reshape((len(x),1))
+        std  = np.sqrt(np.sum(x*x,axis=1) - np.sum(x,axis=1)).reshape((len(x),1))
+        y    = (x - avg) / std
+        return y
+    data_tr = Normalize(data_tr)
+    data_ev = Normalize(data_ev)
+    print "done"
 
-model = L.Classifier(ImageProcessNetwork(I_colors=3, I_Xunit=32, I_Yunit=32, F_unit = 10))
-if args.gpu >= 0:
-    cuda.get_device(args.gpu).use()
-    model.to_gpu()
-xp = np if args.gpu < 0 else cuda.cupy
+    x_tr = data_tr.reshape((len(data_tr),3,32,32))
+    x_ev = data_ev.reshape((len(data_ev),3,32,32))
+    y_tr = label_tr
+    y_ev = label_ev
+    N_tr = len(data_tr) # 50000
+    N_ev = len(data_ev) # 10000
+
+## Define analisis
+    model = L.Classifier(ImageProcessNetwork(I_colors=3, I_Xunit=32, I_Yunit=32, F_unit = 10, **kwd))
+    if id_gpu >= 0:
+        cuda.get_device(id_gpu).use()
+        model.to_gpu()
+    xp = np if id_gpu < 0 else cuda.cupy
 
 # Setup optimizer
-optimizer = optimizers.Adam()
-optimizer.setup(model)
+    optimizer = optimizers.Adam()
+    optimizer.setup(model)
 
 # Learning loop
-f = open("output.dat","w")
-f.write("epoch,mode,accuracy\n")
-for epoch in six.moves.range(1, n_epoch + 1):
-    print 'epoch %d'%epoch 
+    if fOutput: fOutput.write("epoch,mode,loss,accuracy\n")
+    for epoch in six.moves.range(1, n_epoch + 1):
+        print 'epoch %d'%epoch 
 
-    # training
-    perm = np.random.permutation(N_tr)
-    sum_accuracy = 0
-    sum_loss = 0
-    start = time.time()
-    for i in six.moves.range(0, N_tr, batchsize):
-        x = chainer.Variable(xp.asarray(x_tr[perm[i:i + batchsize]]))
-        t = chainer.Variable(xp.asarray(y_tr[perm[i:i + batchsize]]))
+        # training
+        perm = np.random.permutation(N_tr)
+        sum_accuracy = 0
+        sum_loss = 0
+        start = time.time()
+        for i in six.moves.range(0, N_tr, batchsize):
+            x = chainer.Variable(xp.asarray(x_tr[perm[i:i + batchsize]]))
+            t = chainer.Variable(xp.asarray(y_tr[perm[i:i + batchsize]]))
 
-        # Pass the loss function (Classifier defines it) and its arguments
-        model.predictor.setTrainMode(True)
-        optimizer.update(model, x, t)
+            # Pass the loss function (Classifier defines it) and its arguments
+            model.predictor.setTrainMode(True)
+            optimizer.update(model, x, t)
 
-        if epoch == 1 and i == 0:
-            with open('graph.dot', 'w') as o:
-                g = computational_graph.build_computational_graph(
-                    (model.loss, ))
-                o.write(g.dump())
-            print 'graph generated' 
+            if (epoch == 1 and i == 0) and folderName:
+                with open(os.path.join(folderName,'graph.dot'), 'w') as o:
+                    g = computational_graph.build_computational_graph(
+                        (model.loss, ))
+                    o.write(g.dump())
+                print 'graph generated' 
 
-        sum_loss += float(model.loss.data) * len(t.data)
-        sum_accuracy += float(model.accuracy.data) * len(t.data)
-    end = time.time()
-    elapsed_time = end - start
-    throughput = N_tr / elapsed_time
-    print 'train mean loss=%.3f, accuracy=%.1f%%, throughput=%.0f images/sec'%(
-        sum_loss / N_tr, sum_accuracy / N_tr * 100., throughput) 
-    f.write("%d,Train,%e\n"%(epoch,sum_accuracy/N_tr))
+            sum_loss += float(model.loss.data) * len(t.data)
+            sum_accuracy += float(model.accuracy.data) * len(t.data)
+        end = time.time()
+        elapsed_time = end - start
+        throughput = N_tr / elapsed_time
+        print 'train mean loss=%.3f, accuracy=%.1f%%, throughput=%.0f images/sec'%(sum_loss / N_tr, sum_accuracy / N_tr * 100., throughput) 
+        if fOutput: fOutput.write("%d,Train,%e,%e\n"%(epoch,sum_loss/N_tr,sum_accuracy/N_tr))
 
-    # evaluation
-    sum_accuracy = 0
-    sum_loss = 0
-    for i in six.moves.range(0, 10000, batchsize):
-        x = chainer.Variable(xp.asarray(x_ev[i:i + batchsize]),
-                             volatile='on')
-        t = chainer.Variable(xp.asarray(y_ev[i:i + batchsize]),
-                             volatile='on')
-        model.predictor.setTrainMode(False)
-        loss = model(x, t)
-        sum_loss += float(loss.data) * len(t.data)
-        sum_accuracy += float(model.accuracy.data) * len(t.data)
+        # evaluation
+        sum_accuracy = 0
+        sum_loss = 0
+        for i in six.moves.range(0, N_ev, batchsize):
+            x = chainer.Variable(xp.asarray(x_ev[i:i + batchsize]),volatile='on')
+            t = chainer.Variable(xp.asarray(y_ev[i:i + batchsize]),volatile='on')
+            model.predictor.setTrainMode(False)
+            loss = model(x, t)
+            sum_loss += float(loss.data) * len(t.data)
+            sum_accuracy += float(model.accuracy.data) * len(t.data)
 
-    print 'test  mean loss=%.3f, accuracy=%.1f%%'%(
-        sum_loss / N_ev, sum_accuracy / N_ev * 100, ) 
-    f.write("%d,Test,%e\n"%(epoch,sum_accuracy/N_ev))
+        print 'test  mean loss=%.3f, accuracy=%.1f%%'%(sum_loss / N_ev, sum_accuracy / N_ev * 100, ) 
+        if fOutput: fOutput.write("%d,Test,%e,%e\n"%(epoch,sum_loss/N_ev,sum_accuracy/N_ev))
 
-f.close()
+        if folderName and (epoch%10 == 0 or epoch==n_epoch):
+            # Save the model and the optimizer
+            if epoch == n_epoch:
+                myFname = os.path.join(folderName,'mlp_final')
+            else:
+                myFname = os.path.join(folderName,'mlp_%d'%n_epoch)
 
-# Save the model and the optimizer
-print 'save the model' 
-serializers.save_npz('mlp.model', model)
-print 'save the optimizer' 
-serializers.save_npz('mlp.state', optimizer)
+            print 'save the model' 
+            serializers.save_npz(myFname+".model", model)
+            print 'save the optimizer' 
+            serializers.save_npz(myFname+".state", optimizer)
+
+    if fOutput: fOutput.close()
+    if fInfo  : fInfo.close()
+
+CifarAnalysis("Output/test",n_epoch=1,batchsize = 1000)
