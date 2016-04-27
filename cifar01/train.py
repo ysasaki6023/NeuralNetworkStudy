@@ -14,6 +14,7 @@ import chainer.links as L
 import chainer.functions as F
 from chainer import optimizers
 from chainer import serializers
+from chainer.utils import conv
 
 import cPickle as pickle
 import matplotlib.pyplot as plt
@@ -53,19 +54,16 @@ class ImageProcessNetwork(chainer.Chain):
         self.L2_dropout= L2_dropout
 
         self.add_link("P1",L.Convolution2D( I_colors    ,  P1C_feature,  P1C_filter, pad=int(P1C_filter/2.)))
-        self.P1C_nx = int( (I_Xunit+1) / P1P_ksize)
-        self.P1C_ny = int( (I_Yunit+1) / P1P_ksize)
-        self.P1P_pad = (I_Xunit - self.P1C_nx * P1P_ksize,I_Yunit - self.P1C_ny * P1P_ksize)
+        self.P1C_nx = conv.get_conv_outsize(I_Xunit, P1P_ksize, P1P_ksize, 0, cover_all = True)
+        self.P1C_ny = conv.get_conv_outsize(I_Yunit, P1P_ksize, P1P_ksize, 0, cover_all = True)
 
         self.add_link("P2",L.Convolution2D( P1C_feature ,  P2C_feature,  P2C_filter, pad=int(P2C_filter/2.)))
-        self.P2C_nx = int( (self.P1C_nx+1) / P2P_ksize)
-        self.P2C_ny = int( (self.P1C_ny+1) / P2P_ksize)
-        self.P2P_pad = (self.P1C_nx - self.P2C_nx * P2P_ksize, self.P1C_ny - self.P2C_ny * P2P_ksize)
+        self.P2C_nx = conv.get_conv_outsize(self.P1C_nx, P2P_ksize, P2P_ksize, 0, cover_all = True)
+        self.P2C_ny = conv.get_conv_outsize(self.P1C_ny, P2P_ksize, P2P_ksize, 0, cover_all = True)
 
         self.add_link("P3",L.Convolution2D( P2C_feature ,  P3C_feature,  P3C_filter, pad=int(P3C_filter/2.)))
-        self.P3C_nx = int( (self.P2C_nx+1) / P3P_ksize)
-        self.P3C_ny = int( (self.P2C_ny+1) / P3P_ksize)
-        self.P3P_pad = (self.P2C_nx - self.P3C_nx * P3P_ksize, self.P2C_ny - self.P3C_ny * P3P_ksize)
+        self.P3C_nx = conv.get_conv_outsize(self.P2C_nx, P3P_ksize, P3P_ksize, 0, cover_all = True)
+        self.P3C_ny = conv.get_conv_outsize(self.P2C_ny, P3P_ksize, P3P_ksize, 0, cover_all = True)
 
         self.add_link("L1",L.Linear( self.P3C_nx * self.P3C_ny * P3C_feature , L2_unit))
         self.add_link("L2",L.Linear( L2_unit,  F_unit))
@@ -77,15 +75,15 @@ class ImageProcessNetwork(chainer.Chain):
     def __call__(self, x):
         h_P1 = self.P1(x)
         if self.P1N_Normalize: h_P1 = F.local_response_normalization(h_P1)
-        h_P1 = F.max_pooling_2d(F.relu(h_P1), ksize=self.P1P_ksize, pad=self.P1P_pad)
+        h_P1 = F.max_pooling_2d(F.relu(h_P1), ksize=self.P1P_ksize, cover_all=True)
 
         h_P2 = self.P2(h_P1)
         if self.P2N_Normalize: h_P2 = F.local_response_normalization(h_P2)
-        h_P2 = F.max_pooling_2d(F.relu(h_P2), ksize=self.P2P_ksize, pad=self.P2P_pad)
+        h_P2 = F.max_pooling_2d(F.relu(h_P2), ksize=self.P2P_ksize, cover_all=True)
 
         h_P3 = self.P3(h_P2)
         if self.P3N_Normalize: h_P3 = F.local_response_normalization(h_P3)
-        h_P3 = F.max_pooling_2d(F.relu(h_P3), ksize=self.P3P_ksize, pad=self.P3P_pad)
+        h_P3 = F.max_pooling_2d(F.relu(h_P3), ksize=self.P3P_ksize, cover_all=True)
 
         h_L1 = F.dropout(F.relu(self.L1(h_P3)),ratio=self.L1_dropout,train=self.IsTrain)
         h_L2 = F.dropout(F.relu(self.L2(h_L1)),ratio=self.L2_dropout,train=self.IsTrain)
@@ -100,6 +98,7 @@ def CifarAnalysis(folderName=None,n_epoch=1,batchsize = 1000, **kwd):
     OutStr += 'GPU: {}\n'.format(id_gpu)
     OutStr += 'Minibatch-size: {}\n'.format(batchsize) 
     OutStr += 'epoch: {}\n'.format(n_epoch) 
+    OutStr += 'kwd: {}\n'.format(kwd) 
     OutStr += '' 
 
     print OutStr
@@ -152,6 +151,11 @@ def CifarAnalysis(folderName=None,n_epoch=1,batchsize = 1000, **kwd):
     N_ev = len(data_ev) # 10000
 
 ## Define analisis
+    Resume = None
+    if "Resume" in kwd:
+        Resume = kwd["Resume"]
+        del kwd["Resume"]
+
     model = L.Classifier(ImageProcessNetwork(I_colors=3, I_Xunit=32, I_Yunit=32, F_unit = 10, **kwd))
     if id_gpu >= 0:
         cuda.get_device(id_gpu).use()
@@ -161,6 +165,12 @@ def CifarAnalysis(folderName=None,n_epoch=1,batchsize = 1000, **kwd):
 # Setup optimizer
     optimizer = optimizers.Adam()
     optimizer.setup(model)
+
+# Init/Resume
+    if Resume:
+        print('Load optimizer state from', Resume)
+        serializers.load_hdf5(Resume+".state", optimizer)
+        serializers.load_hdf5(Resume+".model", model)
 
 # Learning loop
     if fOutput: fOutput.write("epoch,mode,loss,accuracy\n")
@@ -216,12 +226,152 @@ def CifarAnalysis(folderName=None,n_epoch=1,batchsize = 1000, **kwd):
             else:
                 myFname = os.path.join(folderName,'mlp_%d'%n_epoch)
 
-            print 'save the model' 
-            serializers.save_npz(myFname+".model", model)
-            print 'save the optimizer' 
-            serializers.save_npz(myFname+".state", optimizer)
+            #print 'save the model' 
+            serializers.save_hdf5(myFname+".model", model)
+            serializers.save_hdf5(myFname+".state", optimizer)
 
     if fOutput: fOutput.close()
     if fInfo  : fInfo.close()
 
-CifarAnalysis("Output/test",n_epoch=1,batchsize = 1000)
+## Base Case
+n_epoch = 100
+
+CifarAnalysis("Output/Feature666",
+              n_epoch=n_epoch, batchsize = 1000,
+              P1C_filter=3, P1C_feature=2**6, P1P_ksize=2,P1N_Normalize=False,
+              P2C_filter=3, P2C_feature=2**6, P2P_ksize=2,P2N_Normalize=False,
+              P3C_filter=3, P3C_feature=2**6, P3P_ksize=2,P3N_Normalize=False,
+              L1_dropout=0.0, L2_dropout=0.0, L2_unit   =250)
+
+CifarAnalysis("Output/Filter777",
+              n_epoch=n_epoch, batchsize = 1000,
+              P1C_filter=7, P1C_feature=32, P1P_ksize=2,P1N_Normalize=False,
+              P2C_filter=7, P2C_feature=32, P2P_ksize=2,P2N_Normalize=False,
+              P3C_filter=7, P3C_feature=32, P3P_ksize=2,P3N_Normalize=False,
+              L1_dropout=0.0, L2_dropout=0.0, L2_unit   =250)
+
+CifarAnalysis("Output/Baseline",
+              n_epoch=n_epoch, batchsize = 1000,
+              P1C_filter=3, P1C_feature=32, P1P_ksize=2,P1N_Normalize=False,
+              P2C_filter=3, P2C_feature=32, P2P_ksize=2,P2N_Normalize=False,
+              P3C_filter=3, P3C_feature=32, P3P_ksize=2,P3N_Normalize=False,
+              L1_dropout=0.0, L2_dropout=0.0, L2_unit   =250)
+
+CifarAnalysis("Output/NormalzeOnAll",
+              n_epoch=n_epoch, batchsize = 1000,
+              P1C_filter=3, P1C_feature=32, P1P_ksize=2,P1N_Normalize=True,
+              P2C_filter=3, P2C_feature=32, P2P_ksize=2,P2N_Normalize=True,
+              P3C_filter=3, P3C_feature=32, P3P_ksize=2,P3N_Normalize=True,
+              L1_dropout=0.0, L2_dropout=0.0, L2_unit   =250)
+
+CifarAnalysis("Output/NormalzeOnOnlyFirstLayer",
+              n_epoch=n_epoch, batchsize = 1000,
+              P1C_filter=3, P1C_feature=32, P1P_ksize=2,P1N_Normalize=True,
+              P2C_filter=3, P2C_feature=32, P2P_ksize=2,P2N_Normalize=False,
+              P3C_filter=3, P3C_feature=32, P3P_ksize=2,P3N_Normalize=False,
+              L1_dropout=0.0, L2_dropout=0.0, L2_unit   =250)
+
+CifarAnalysis("Output/Filter555",
+              n_epoch=n_epoch, batchsize = 1000,
+              P1C_filter=5, P1C_feature=32, P1P_ksize=2,P1N_Normalize=False,
+              P2C_filter=5, P2C_feature=32, P2P_ksize=2,P2N_Normalize=False,
+              P3C_filter=5, P3C_feature=32, P3P_ksize=2,P3N_Normalize=False,
+              L1_dropout=0.0, L2_dropout=0.0, L2_unit   =250)
+
+CifarAnalysis("Output/Feature333",
+              n_epoch=n_epoch, batchsize = 1000,
+              P1C_filter=3, P1C_feature=2**3, P1P_ksize=2,P1N_Normalize=False,
+              P2C_filter=3, P2C_feature=2**3, P2P_ksize=2,P2N_Normalize=False,
+              P3C_filter=3, P3C_feature=2**3, P3P_ksize=2,P3N_Normalize=False,
+              L1_dropout=0.0, L2_dropout=0.0, L2_unit   =250)
+
+CifarAnalysis("Output/Feature444",
+              n_epoch=n_epoch, batchsize = 1000,
+              P1C_filter=3, P1C_feature=2**4, P1P_ksize=2,P1N_Normalize=False,
+              P2C_filter=3, P2C_feature=2**4, P2P_ksize=2,P2N_Normalize=False,
+              P3C_filter=3, P3C_feature=2**4, P3P_ksize=2,P3N_Normalize=False,
+              L1_dropout=0.0, L2_dropout=0.0, L2_unit   =250)
+
+CifarAnalysis("Output/Feature654",
+              n_epoch=n_epoch, batchsize = 1000,
+              P1C_filter=3, P1C_feature=2**6, P1P_ksize=2,P1N_Normalize=False,
+              P2C_filter=3, P2C_feature=2**5, P2P_ksize=2,P2N_Normalize=False,
+              P3C_filter=3, P3C_feature=2**4, P3P_ksize=2,P3N_Normalize=False,
+              L1_dropout=0.0, L2_dropout=0.0, L2_unit   =250)
+
+CifarAnalysis("Output/Feature643",
+              n_epoch=n_epoch, batchsize = 1000,
+              P1C_filter=3, P1C_feature=2**6, P1P_ksize=2,P1N_Normalize=False,
+              P2C_filter=3, P2C_feature=2**4, P2P_ksize=2,P2N_Normalize=False,
+              P3C_filter=3, P3C_feature=2**3, P3P_ksize=2,P3N_Normalize=False,
+              L1_dropout=0.0, L2_dropout=0.0, L2_unit   =250)
+
+CifarAnalysis("Output/Ksize333",
+              n_epoch=n_epoch, batchsize = 1000,
+              P1C_filter=3, P1C_feature=32, P1P_ksize=3,P1N_Normalize=False,
+              P2C_filter=3, P2C_feature=32, P2P_ksize=3,P2N_Normalize=False,
+              P3C_filter=3, P3C_feature=32, P3P_ksize=3,P3N_Normalize=False,
+              L1_dropout=0.0, L2_dropout=0.0, L2_unit   =250)
+
+CifarAnalysis("Output/Ksize444",
+              n_epoch=n_epoch, batchsize = 1000,
+              P1C_filter=3, P1C_feature=32, P1P_ksize=4,P1N_Normalize=False,
+              P2C_filter=3, P2C_feature=32, P2P_ksize=4,P2N_Normalize=False,
+              P3C_filter=3, P3C_feature=32, P3P_ksize=4,P3N_Normalize=False,
+              L1_dropout=0.0, L2_dropout=0.0, L2_unit   =250)
+
+CifarAnalysis("Output/DropOutL0.5L0.5",
+              n_epoch=n_epoch, batchsize = 1000,
+              P1C_filter=3, P1C_feature=32, P1P_ksize=2,P1N_Normalize=False,
+              P2C_filter=3, P2C_feature=32, P2P_ksize=2,P2N_Normalize=False,
+              P3C_filter=3, P3C_feature=32, P3P_ksize=2,P3N_Normalize=False,
+              L1_dropout=0.5, L2_dropout=0.5, L2_unit   =250)
+
+CifarAnalysis("Output/DropOutL0.2L0.2",
+              n_epoch=n_epoch, batchsize = 1000,
+              P1C_filter=3, P1C_feature=32, P1P_ksize=2,P1N_Normalize=False,
+              P2C_filter=3, P2C_feature=32, P2P_ksize=2,P2N_Normalize=False,
+              P3C_filter=3, P3C_feature=32, P3P_ksize=2,P3N_Normalize=False,
+              L1_dropout=0.2, L2_dropout=0.2, L2_unit   =250)
+
+CifarAnalysis("Output/DropOutL0.5L0.0",
+              n_epoch=n_epoch, batchsize = 1000,
+              P1C_filter=3, P1C_feature=32, P1P_ksize=2,P1N_Normalize=False,
+              P2C_filter=3, P2C_feature=32, P2P_ksize=2,P2N_Normalize=False,
+              P3C_filter=3, P3C_feature=32, P3P_ksize=2,P3N_Normalize=False,
+              L1_dropout=0.5, L2_dropout=0.0, L2_unit   =250)
+
+CifarAnalysis("Output/DropOutL0.0L0.5",
+              n_epoch=n_epoch, batchsize = 1000,
+              P1C_filter=3, P1C_feature=32, P1P_ksize=2,P1N_Normalize=False,
+              P2C_filter=3, P2C_feature=32, P2P_ksize=2,P2N_Normalize=False,
+              P3C_filter=3, P3C_feature=32, P3P_ksize=2,P3N_Normalize=False,
+              L1_dropout=0.0, L2_dropout=0.5, L2_unit   =250)
+
+CifarAnalysis("Output/Unit1000",
+              n_epoch=n_epoch, batchsize = 1000,
+              P1C_filter=3, P1C_feature=32, P1P_ksize=2,P1N_Normalize=False,
+              P2C_filter=3, P2C_feature=32, P2P_ksize=2,P2N_Normalize=False,
+              P3C_filter=3, P3C_feature=32, P3P_ksize=2,P3N_Normalize=False,
+              L1_dropout=0.0, L2_dropout=0.0, L2_unit   =1000)
+
+CifarAnalysis("Output/Unit500",
+              n_epoch=n_epoch, batchsize = 1000,
+              P1C_filter=3, P1C_feature=32, P1P_ksize=2,P1N_Normalize=False,
+              P2C_filter=3, P2C_feature=32, P2P_ksize=2,P2N_Normalize=False,
+              P3C_filter=3, P3C_feature=32, P3P_ksize=2,P3N_Normalize=False,
+              L1_dropout=0.0, L2_dropout=0.0, L2_unit   =500)
+
+CifarAnalysis("Output/Unit100",
+              n_epoch=n_epoch, batchsize = 1000,
+              P1C_filter=3, P1C_feature=32, P1P_ksize=2,P1N_Normalize=False,
+              P2C_filter=3, P2C_feature=32, P2P_ksize=2,P2N_Normalize=False,
+              P3C_filter=3, P3C_feature=32, P3P_ksize=2,P3N_Normalize=False,
+              L1_dropout=0.0, L2_dropout=0.0, L2_unit   =100)
+
+CifarAnalysis("Output/Unit50",
+              n_epoch=n_epoch, batchsize = 1000,
+              P1C_filter=3, P1C_feature=32, P1P_ksize=2,P1N_Normalize=False,
+              P2C_filter=3, P2C_feature=32, P2P_ksize=2,P2N_Normalize=False,
+              P3C_filter=3, P3C_feature=32, P3P_ksize=2,P3N_Normalize=False,
+              L1_dropout=0.0, L2_dropout=0.0, L2_unit   = 50)
