@@ -1,0 +1,4 @@
+GPU: 0
+Minibatch-size: 1000
+epoch: 200
+kwd: {'P0P_ksize': 2, 'L2_unit': 100, 'P2P_ksize': 1, 'P0C_feature': 32, 'L2_dropout': 0.0, 'P1P_ksize': 1, 'P2C_filter': 3, 'P0C_filter': 3, 'P2C_feature': 16, 'N_PLayers': 3, 'L1_dropout': 0.5, 'P1C_feature': 16, 'P1C_filter': 3}
