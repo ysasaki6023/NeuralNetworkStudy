@@ -27,13 +27,12 @@ import h5py
 import net
 netFile = os.path.join(imp.find_module("net")[0]).read() # To save the current net structure in the hdf5 file
 
-def CifarAnalysis(folderName=None,n_epoch=1,batchsize = 1000, **kwd):
+def CifarAnalysis(folderName=None,batchsize = 1000, **kwd):
     id_gpu  = 0
 
     OutStr = ""
     OutStr += 'GPU: {}\n'.format(id_gpu)
     OutStr += 'Minibatch-size: {}\n'.format(batchsize) 
-    OutStr += 'epoch: {}\n'.format(n_epoch) 
     OutStr += 'kwd: {}\n'.format(kwd) 
     OutStr += '' 
     print OutStr
@@ -102,12 +101,15 @@ def CifarAnalysis(folderName=None,n_epoch=1,batchsize = 1000, **kwd):
     sm = StopManager.StopManager()
     sm.SetMaximumEpoch(10000)
     sm.SetMinimumEpoch(10)
-    sm.SetStopThreshold(8e-4)
+    sm.SetStopThreshold(3e-4)
     print sm
 
 # Learning loop
     if fOutput: fOutput.write("epoch,mode,loss,accuracy\n")
-    for epoch in six.moves.range(1, n_epoch + 1):
+    #for epoch in six.moves.range(1, n_epoch + 1):
+    epoch = 0
+    while True:
+        epoch += 1
         print 'epoch %d'%epoch 
 
         # training
@@ -177,21 +179,23 @@ def CifarAnalysis(folderName=None,n_epoch=1,batchsize = 1000, **kwd):
     if fOutput: fOutput.close()
 
 if __name__=="__main__":
-    n_epoch = 2000
-    CifarAnalysis("Output/L4testZCA",
-                   n_epoch=n_epoch,
-                   batchsize = 1000,
-                   N_PLayers = 4,
-                   P0C_feature = 32,
-                   P1C_feature = 32,
-                   P2C_feature = 16,
-                   P0C_filter  = 3,
-                   P1C_filter  = 3,
-                   P2C_filter  = 3,
-                   P0P_ksize   = 2,
-                   P1P_ksize   = 2,
-                   P2P_ksize   = 2,
-                   L1_dropout  = 0.5,
-                   L2_dropout  = 0.0,
-                   L2_unit     = 500,
-                   Resume="Output/L4testZCA/mlp_10.hdf5")
+    CifarAnalysis("Output/L8",batchsize = 300,N_PLayers = 8,
+                   P0C_feature = 32, P1C_feature = 32, P2C_feature = 16,
+                   P0C_filter  = 3,  P1C_filter  = 3,  P2C_filter  = 3,
+                   P0P_ksize   = 1,  P1P_ksize   = 2,  P2P_ksize   = 2,
+                   L1_dropout  = 0.5,L2_dropout  = 0.0,L2_unit     = 500)
+    CifarAnalysis("Output/L4",batchsize = 500,N_PLayers = 4,
+                   P0C_feature = 32, P1C_feature = 32, P2C_feature = 16,
+                   P0C_filter  = 3,  P1C_filter  = 3,  P2C_filter  = 3,
+                   P0P_ksize   = 1,  P1P_ksize   = 2,  P2P_ksize   = 2,
+                   L1_dropout  = 0.5,L2_dropout  = 0.0,L2_unit     = 500)
+    CifarAnalysis("Output/L8_Unit100",batchsize = 1000,N_PLayers = 8,
+                   P0C_feature = 32, P1C_feature = 32, P2C_feature = 16,
+                   P0C_filter  = 3,  P1C_filter  = 3,  P2C_filter  = 3,
+                   P0P_ksize   = 2,  P1P_ksize   = 2,  P2P_ksize   = 2,
+                   L1_dropout  = 0.5,L2_dropout  = 0.0,L2_unit     = 100)
+    CifarAnalysis("Output/L4_ksize222",batchsize = 1000,N_PLayers = 4,
+                   P0C_feature = 32, P1C_feature = 32, P2C_feature = 16,
+                   P0C_filter  = 3,  P1C_filter  = 3,  P2C_filter  = 3,
+                   P0P_ksize   = 2,  P1P_ksize   = 2,  P2P_ksize   = 2,
+                   L1_dropout  = 0.5,L2_dropout  = 0.0,L2_unit     = 500)
