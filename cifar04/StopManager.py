@@ -22,7 +22,7 @@ class StopManager:
         if np.isnan(params["AIrate"]):
             return ""
         else:
-            return ("Improvement = +%.1f%% / 100 epoch ( = %.0f min ), Stop threshold = %.1f%% / 100epoch\n"%(params["AIrate"]*100*100,params["EpochTime"]*100/60.,self.Threshold*100*100)
+            return ("Current:      Accuracy = %.1f%%, Epoch = %.0f, Improvement = +%.1f%% / 100 epoch ( = %.0f min ), Stop threshold = %.1f%% / 100epoch\n"%(params["Current:Accuracy"]*100,params["Current:Epoch"],params["AIrate"]*100*100,params["EpochTime"]*100/60.,self.Threshold*100*100)
         +"At threshold: Accuracy = %.1f%%, Epoch = %.0f, Time remaining = %.0f min"%(params["Threshold:Accuracy"]*100.,params["Threshold:Epoch"],params["Threshold:TimeRemaining"]/60.))
 
 
@@ -61,6 +61,8 @@ class StopManager:
         params["Threshold:TimeRemaining"] = timeAvg * p1[-1] * (1./self.Threshold - 1./aiavg[-1])
         params["Threshold:Epoch"]         = Et
         params["Threshold:Accuracy"]      = accur[-1] + p1[-1] * (np.log(Et) - np.log(epoch[-1]))
+        params["Current:Epoch"]           = epoch[-1]
+        params["Current:Accuracy"]        = accur[-1]
         params["AIrate"]                  = aiavg[-1]
         params["EpochTime"]               = timeAvg
         return params
